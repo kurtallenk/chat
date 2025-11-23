@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Chat — English / Hebrew / Filipino</title>
+  <style>
+    :root{--bg:#f7f9fb;--accent:#0b84ff;--user:#e0f7ff;--bot:#ffffff}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,'Helvetica Neue',Arial; background:var(--bg);display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+    .app{width:960px;max-width:96vw;background:#fff;border-radius:12px;box-shadow:0 8px 30px rgba(9,30,66,.08);overflow:hidden;display:grid;grid-template-columns:330px 1fr}
+
+    /* left: settings */
+    .panel{padding:18px;border-right:1px solid #eee}
+    h2{margin:6px 0 12px;font-size:18px}
+    label{display:block;margin-top:10px;font-size:13px;color:#333}
+    select,input{margin-top:6px;padding:10px;border-radius:8px;border:1px solid #ddd;width:100%;box-sizing:border-box}
+    .small{font-size:12px;color:#666;margin-top:6px}
+    button{margin-top:12px;padding:10px 12px;background:var(--accent);color:#fff;border:0;border-radius:8px;cursor:pointer}
+
+    /* right: chat */
+    .chat{display:flex;flex-direction:column;height:600px}
+    .header{padding:14px 18px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between}
+    .header .title{font-weight:600}
+    .messages{flex:1;padding:18px;overflow:auto;background:linear-gradient(180deg,#fbfdff, #fff)}
+    .composer{display:flex;padding:12px;border-top:1px solid #eee;gap:8px}
+    .composer input{flex:1;padding:10px;border-radius:8px;border:1px solid #ddd}
+
+    .message{max-width:72%;padding:10px;border-radius:10px;margin-bottom:10px;box-shadow:0 1px 0 rgba(0,0,0,0.03)}
+    .message.user{margin-left:auto;background:var(--user);text-align:right}
+    .message.bot{margin-right:auto;background:var(--bot);text-align:left}
+    .meta{font-size:11px;color:#666;margin-top:6px}
+
+    /* small responsive */
+    @media (max-width:800px){.app{grid-template-columns:1fr;}.panel{order:2;border-right:0;border-top:1px solid #eee}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="panel">
+      <h2>Settings</h2>
+      <label for="langSelect">Language (UI & messages)</label>
+      <select id="langSelect" aria-label="Language selector">
+        <option value="en">English</option>
+        <option value="he">עברית (Hebrew)</option>
+        <option value="fil">Filipino (Tagalog)</option>
+      </select>
+
+      <div class="small" style="margin-top:10px">Your selection controls UI strings, writing direction and tells the backend which language to use for replies.</div>
+
+      <label for="webhook">Zapier Webhook URL</label>
+      <input id="webhook" placeholder="https://hooks.zapier.com/hooks/catch/XXX/YYY" />
+      <div class="small">Replace this with the Webhook URL from your Zapier 'Catch Hook' trigger.</div>
+
+      <label for="username">Display name</label>
+      <input id="username" placeholder="Your name (visible in chat)" />
+
+      <button id="saveBtn">Save settings</button>
+
+      <hr style="margin:18px 0;border:none;border-top:1px solid #f0f0f0" />
+      <div class="small"><strong>Zapier Setup (quick):</strong>
+        <ol style="padding-left:18px;margin:8px 0 0">
+          <li>Make a Zap with trigger: <em>Webhooks by Zapier → Catch Hook</em>.</li>
+          <li>Next action: call your AI (ChatGPT or other). Pass the incoming fields `message`, `language`, `username`.</li>
+          <li>Return response using <em>Webhooks → Return Response</em> with JSON like: <code>{"reply":"..."}</code></li>
+        </ol>
+      </div>
+
+    </div>
+
+    <div class="chat" role="region" aria-label="Chat">
+      <div class="header">
+        <div class="title">Multilingual Chat</div>
+        <div id="systemMessage" class="small">System ready</div>
+      </div>
+
+      <div id="messages" class="messages" aria-live="polite"></div>
+
+      <div class="composer">
+        <input id="messageInput" placeholder="Type your message..." autocomplete="off" />
+        <button id="sendBtn">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // -----------------------------
+    // CONFIG: change only this default if you want
+    const DEFAULT_WEBHOOK = "https://hooks.zapier.com/hooks/catch/25467232/uzwxayk/"; // keep empty — replace via UI or here
+    // -----------------------------
+
+    // translations for UI and system messages
+    const translations = {
+      en: {
+        placeholder: "Type your message...",
+        send: "Send",
+        systemReady: "Welcome — language set to English.",
+        saving: "Settings saved.",
+        errorWebhook: "Webhook URL is missing. Please add your Zapier webhook in Settings.",
+        you: "You",
+        botName: "Bot"
+      },
+      he: {
+        placeholder: "הקלד הודעה...",
+        send: "שלח",
+        systemReady: "ברוך הבא — השפה נקבעה לעברית.",
+        saving: "ההגדרות נשמרו.",
+        errorWebhook: "כתובת הוובבוק חסרה. נא להוסיף את ה-webhook של Zapier בהגדרות.",
+        you: "אתה",
+        botName: "בוט"
+      },
+      fil: {
+        placeholder: "I-type ang mensahe...",
+        send: "Ipadala",
+        systemReady: "Maligayang pagdating — nakaset ang wika sa Filipino.",
+        saving: "Na-save ang settings.",
+        errorWebhook: "Walang webhook URL. Pakilagay ang Zapier webhook sa Settings.",
+        you: "Ikaw",
+        botName: "Bot"
+      }
+    };
+
+    // DOM refs
+    const langSelect = document.getElementById('langSelect');
+    const webhookInput = document.getElementById('webhook');
+    const usernameInput = document.getElementById('username');
+    const saveBtn = document.getElementById('saveBtn');
+    const messagesEl = document.getElementById('messages');
+    const messageInput = document.getElementById('messageInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const systemMessage = document.getElementById('systemMessage');
+
+    // load saved settings
+    const STORAGE_KEY = 'multichat_settings_v1';
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+
+    // apply saved or defaults
+    langSelect.value = saved.language || 'en';
+    webhookInput.value = saved.webhook || DEFAULT_WEBHOOK;
+    usernameInput.value = saved.username || '';
+
+    function saveSettings() {
+      const obj = { language: langSelect.value, webhook: webhookInput.value.trim(), username: usernameInput.value.trim() };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+      showSystemText(translations[obj.language].saving);
+    }
+
+    saveBtn.addEventListener('click', () => { saveSettings(); applyLanguage(langSelect.value); });
+
+    function applyLanguage(lang) {
+      const t = translations[lang] || translations.en;
+      messageInput.placeholder = t.placeholder;
+      sendBtn.textContent = t.send;
+
+      // set reading direction for chat and input
+      const dir = (lang === 'he') ? 'rtl' : 'ltr';
+      messagesEl.dir = dir;
+      messageInput.dir = dir;
+
+      // system message
+      showSystemText(t.systemReady);
+
+      // store the language immediately
+      const s = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+      s.language = lang;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+    }
+
+    function showSystemText(text){ systemMessage.textContent = text }
+
+    // show message helpers
+    function addUserMessage(text, lang){
+      const wrapper = document.createElement('div');
+      wrapper.className = 'message user';
+      wrapper.style.direction = (lang === 'he') ? 'rtl' : 'ltr';
+      wrapper.innerHTML = `<div>${escapeHtml(text)}</div><div class="meta">${escapeHtml(getUsername() || translations[lang]?.you || 'You')} • ${new Date().toLocaleTimeString()}</div>`;
+      messagesEl.appendChild(wrapper);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function addBotMessage(text, lang){
+      const wrapper = document.createElement('div');
+      wrapper.className = 'message bot';
+      wrapper.style.direction = (lang === 'he') ? 'rtl' : 'ltr';
+      wrapper.innerHTML = `<div>${escapeHtml(text)}</div><div class="meta">${escapeHtml(translations[lang]?.botName || 'Bot')} • ${new Date().toLocaleTimeString()}</div>`;
+      messagesEl.appendChild(wrapper);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function escapeHtml(unsafe){
+      return String(unsafe)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function getUsername(){
+      const s = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+      return s.username || usernameInput.value.trim();
+    }
+
+    // send message to Zapier webhook
+    async function sendMessage(){
+      const text = messageInput.value.trim();
+      if(!text) return;
+      const settings = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+      const lang = settings.language || langSelect.value || 'en';
+      const webhook = (settings.webhook && settings.webhook.length) ? settings.webhook : webhookInput.value.trim();
+
+      addUserMessage(text, lang);
+      messageInput.value = '';
+      messageInput.focus();
+
+      if(!webhook){
+        // show error system message and also a bot-local fallback
+        showSystemText(translations[lang].errorWebhook);
+        addBotMessage('(No webhook configured) — this is a local fallback reply.', lang);
+        return;
+      }
+
+      // payload sent to Zapier -> Zap should forward to ChatGPT (or other AI) and return JSON { reply: "..." }
+      const payload = { message: text, language: lang, username: getUsername() };
+
+      try{
+        const form = new FormData();
+        form.append("message", text);
+        form.append("language", lang);
+        form.append("username", getUsername());
+
+        const res = await fetch(webhook, {
+          method: 'POST',
+          body: form
+        });
+
+
+        // Zapier "Catch Hook" typical response is 200 OK. If you're using 'Return Response', Zapier will send JSON back.
+        const data = await res.json();
+
+        // expect data.reply — if not present, show raw returned body
+        if(data && typeof data.reply === 'string'){
+          addBotMessage(data.reply, lang);
+        } else {
+          addBotMessage(JSON.stringify(data), lang);
+        }
+      }catch(err){
+        console.error(err);
+        showSystemText('Network error: ' + (err && err.message));
+        addBotMessage('(Network error communicating with webhook)', lang);
+      }
+    }
+
+    // keyboard send
+    messageInput.addEventListener('keydown', (e) => { if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); sendMessage(); } });
+    sendBtn.addEventListener('click', sendMessage);
+
+    // initial apply
+    applyLanguage(langSelect.value);
+
+    // helper: when language selector changes
+    langSelect.addEventListener('change', (e) => { applyLanguage(e.target.value); });
+
+    // auto-save when webhook/username changed
+    webhookInput.addEventListener('change', () => { saveSettings(); });
+    usernameInput.addEventListener('change', () => { saveSettings(); });
+
+    // show a short welcome sample if none exists
+    if(!messagesEl.children.length){
+      const lang = langSelect.value || 'en';
+      addBotMessage(translations[lang].systemReady, lang);
+    }
+
+  </script>
+</body>
+</html>
